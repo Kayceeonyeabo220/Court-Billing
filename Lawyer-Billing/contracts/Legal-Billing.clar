@@ -18,6 +18,15 @@
 (define-constant ERR_INVALID_STATUS (err u112))
 (define-constant ERR_CASE_NOT_FOUND (err u113))
 (define-constant ERR_CASE_ALREADY_EXISTS (err u114))
+(define-constant ERR_INVALID_INPUT (err u115))
+(define-constant ERR_INVALID_EMAIL (err u116))
+(define-constant ERR_INVALID_NAME (err u117))
+(define-constant ERR_INVALID_SPECIALIZATION (err u118))
+(define-constant ERR_INVALID_TITLE (err u119))
+(define-constant ERR_INVALID_DESCRIPTION (err u120))
+(define-constant ERR_INVALID_DUE_BLOCKS (err u121))
+(define-constant ERR_INVALID_FEE (err u122))
+(define-constant ERR_INVALID_DUE_DATE (err u123))
 
 ;; Minimum and maximum values for validation
 (define-constant MIN_HOURLY_RATE u50)
@@ -207,7 +216,32 @@
 
 ;; Validate email format (simplified)
 (define-private (is-valid-email (email (string-ascii 100)))
-    (> (len email) u5) ;; Basic validation - contains @ and domain
+    (and (> (len email) u5) (< (len email) u100))
+)
+
+;; Validate name input
+(define-private (is-valid-name (name (string-ascii 100)))
+    (and (> (len name) u0) (< (len name) u100))
+)
+
+;; Validate specialization input
+(define-private (is-valid-specialization (specialization (string-ascii 50)))
+    (and (> (len specialization) u0) (< (len specialization) u50))
+)
+
+;; Validate title input
+(define-private (is-valid-title (title (string-ascii 200)))
+    (and (> (len title) u0) (< (len title) u200))
+)
+
+;; Validate description input
+(define-private (is-valid-description (description (string-ascii 500)))
+    (and (> (len description) u0) (< (len description) u500))
+)
+
+;; Validate principal address (check if it's a valid principal)
+(define-private (is-valid-principal (address principal))
+    (not (is-eq address 'SP000000000000000000002Q6VF78))
 )
 
 ;; Check if caller is contract owner
@@ -227,14 +261,44 @@
             (or (is-eq status "overdue") (is-eq status "cancelled"))))
 )
 
+;; Sanitize and validate client data
+(define-private (validate-client-data (name (string-ascii 100)) (email (string-ascii 100)) (client-address principal))
+    (and (is-valid-name name)
+         (is-valid-email email)
+         (is-valid-principal client-address))
+)
+
+;; Sanitize and validate lawyer data
+(define-private (validate-lawyer-data (name (string-ascii 100)) (email (string-ascii 100)) 
+                                     (lawyer-address principal) (specialization (string-ascii 50)))
+    (and (is-valid-name name)
+         (is-valid-email email)
+         (is-valid-principal lawyer-address)
+         (is-valid-specialization specialization))
+)
+
+;; Validate case ID range
+(define-private (is-valid-case-id (case-id uint))
+    (and (>= case-id u1) (< case-id (var-get next-case-id)))
+)
+
+;; Validate client ID range
+(define-private (is-valid-client-id (client-id uint))
+    (and (>= client-id u1) (< client-id (var-get next-client-id)))
+)
+
+;; Validate lawyer ID range
+(define-private (is-valid-lawyer-id (lawyer-id uint))
+    (and (>= lawyer-id u1) (< lawyer-id (var-get next-lawyer-id)))
+)
+
 ;; PUBLIC FUNCTIONS
 
 ;; Register a new client
 (define-public (register-client (name (string-ascii 100)) (email (string-ascii 100)) (client-address principal))
     (let ((client-id (var-get next-client-id)))
         (asserts! (is-contract-owner) ERR_UNAUTHORIZED)
-        (asserts! (> (len name) u0) (err u115))
-        (asserts! (is-valid-email email) (err u116))
+        (asserts! (validate-client-data name email client-address) ERR_INVALID_INPUT)
         (asserts! (is-none (map-get? clients client-id)) ERR_CLIENT_ALREADY_EXISTS)
         
         (map-set clients client-id {
@@ -255,8 +319,7 @@
                                (lawyer-address principal) (hourly-rate uint) (specialization (string-ascii 50)))
     (let ((lawyer-id (var-get next-lawyer-id)))
         (asserts! (is-contract-owner) ERR_UNAUTHORIZED)
-        (asserts! (> (len name) u0) (err u117))
-        (asserts! (is-valid-email email) (err u118))
+        (asserts! (validate-lawyer-data name email lawyer-address specialization) ERR_INVALID_INPUT)
         (asserts! (is-valid-hourly-rate hourly-rate) ERR_INVALID_RATE)
         (asserts! (is-none (map-get? lawyers lawyer-id)) ERR_LAWYER_ALREADY_EXISTS)
         
@@ -282,7 +345,8 @@
         (asserts! (is-contract-owner) ERR_UNAUTHORIZED)
         (asserts! (is-some (get-client client-id)) ERR_CLIENT_NOT_FOUND)
         (asserts! (is-some (get-lawyer lawyer-id)) ERR_LAWYER_NOT_FOUND)
-        (asserts! (> (len title) u0) (err u119))
+        (asserts! (is-valid-title title) ERR_INVALID_TITLE)
+        (asserts! (is-valid-description description) ERR_INVALID_DESCRIPTION)
         
         (map-set cases case-id {
             client-id: client-id,
@@ -311,7 +375,7 @@
         
         (asserts! (or (is-contract-owner) (is-eq tx-sender (get address lawyer-info))) ERR_UNAUTHORIZED)
         (asserts! (is-valid-time-minutes minutes) ERR_INVALID_TIME_ENTRY)
-        (asserts! (> (len description) u0) (err u120))
+        (asserts! (is-valid-description description) ERR_INVALID_DESCRIPTION)
         (asserts! (is-eq (get lawyer-id case-info) lawyer-id) ERR_UNAUTHORIZED)
         
         (map-set time-entries entry-id {
@@ -339,7 +403,7 @@
         (asserts! (is-some (get-client client-id)) ERR_CLIENT_NOT_FOUND)
         (asserts! (is-some (get-lawyer lawyer-id)) ERR_LAWYER_NOT_FOUND)
         (asserts! (is-some (get-case case-id)) ERR_CASE_NOT_FOUND)
-        (asserts! (> due-blocks u0) (err u121))
+        (asserts! (> due-blocks u0) ERR_INVALID_DUE_BLOCKS)
         
         ;; Create invoice with zero amount initially - would be calculated from time entries
         (map-set invoices invoice-id {
@@ -399,12 +463,27 @@
     (let ((case-info (unwrap! (get-case case-id) ERR_CASE_NOT_FOUND)))
         (asserts! (is-contract-owner) ERR_UNAUTHORIZED)
         (asserts! (is-valid-case-status new-status) ERR_INVALID_STATUS)
+        (asserts! (> case-id u0) ERR_INVALID_INPUT)
         
-        (map-set cases case-id (merge case-info {
+        ;; Create validated case data with all original fields plus updates
+        (let ((validated-case-data {
+            client-id: (get client-id case-info),
+            lawyer-id: (get lawyer-id case-info),
+            title: (get title case-info),
+            description: (get description case-info),
             status: new-status,
+            created-at: (get created-at case-info),
             updated-at: block-height
         }))
-        (ok true)
+            ;; Only update if case-id is within valid range
+            (if (and (>= case-id u1) (< case-id (var-get next-case-id)))
+                (begin
+                    (map-set cases case-id validated-case-data)
+                    (ok true)
+                )
+                ERR_CASE_NOT_FOUND
+            )
+        )
     )
 )
 
@@ -423,9 +502,19 @@
 (define-public (deactivate-client (client-id uint))
     (let ((client-info (unwrap! (get-client client-id) ERR_CLIENT_NOT_FOUND)))
         (asserts! (is-contract-owner) ERR_UNAUTHORIZED)
+        (asserts! (is-valid-client-id client-id) ERR_CLIENT_NOT_FOUND)
         
-        (map-set clients client-id (merge client-info { active: false }))
-        (ok true)
+        ;; Create validated client data with all original fields
+        (let ((validated-client-data {
+            name: (get name client-info),
+            email: (get email client-info),
+            address: (get address client-info),
+            active: false,
+            created-at: (get created-at client-info)
+        }))
+            (map-set clients client-id validated-client-data)
+            (ok true)
+        )
     )
 )
 
@@ -433,9 +522,21 @@
 (define-public (deactivate-lawyer (lawyer-id uint))
     (let ((lawyer-info (unwrap! (get-lawyer lawyer-id) ERR_LAWYER_NOT_FOUND)))
         (asserts! (is-contract-owner) ERR_UNAUTHORIZED)
+        (asserts! (is-valid-lawyer-id lawyer-id) ERR_LAWYER_NOT_FOUND)
         
-        (map-set lawyers lawyer-id (merge lawyer-info { active: false }))
-        (ok true)
+        ;; Create validated lawyer data with all original fields
+        (let ((validated-lawyer-data {
+            name: (get name lawyer-info),
+            email: (get email lawyer-info),
+            address: (get address lawyer-info),
+            hourly-rate: (get hourly-rate lawyer-info),
+            specialization: (get specialization lawyer-info),
+            active: false,
+            created-at: (get created-at lawyer-info)
+        }))
+            (map-set lawyers lawyer-id validated-lawyer-data)
+            (ok true)
+        )
     )
 )
 
@@ -463,7 +564,7 @@
 (define-public (update-contract-fee (new-fee uint))
     (begin
         (asserts! (is-contract-owner) ERR_UNAUTHORIZED)
-        (asserts! (<= new-fee u20) (err u122)) ;; Max 20% fee
+        (asserts! (<= new-fee u20) ERR_INVALID_FEE) ;; Max 20% fee
         
         (var-set contract-fee-percentage new-fee)
         (ok true)
@@ -475,7 +576,7 @@
     (let ((invoice-info (unwrap! (get-invoice invoice-id) ERR_INVOICE_NOT_FOUND)))
         (asserts! (is-contract-owner) ERR_UNAUTHORIZED)
         (asserts! (is-eq (get status invoice-info) "pending") ERR_INVALID_STATUS)
-        (asserts! (< (get due-date invoice-info) block-height) (err u123))
+        (asserts! (< (get due-date invoice-info) block-height) ERR_INVALID_DUE_DATE)
         
         (map-set invoices invoice-id (merge invoice-info { status: "overdue" }))
         (ok true)
